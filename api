@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TubeKeywords – YouTube Keyword Research</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f0f0f; color: #e8e8e8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    input:focus { outline: 2px solid #E24B4A; outline-offset: 1px; }
+    button:hover:not(:disabled) { opacity: 0.88; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #111; } ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+    function formatNum(n) {
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+      if (n >= 1000) return Math.round(n / 1000) + "K";
+      return String(n);
+    }
+
+    function scoreColor(s) {
+      if (s <= 35) return "#3B6D11";
+      if (s <= 65) return "#854F0B";
+      return "#A32D2D";
+    }
+
+    function scoreBg(s) {
+      if (s <= 35) return "#EAF3DE";
+      if (s <= 65) return "#FAEEDA";
+      return "#FCEBEB";
+    }
+
+    function trendStyle(t) {
+      if (t === "rising")   return { bg: "#0d2b20", text: "#5DCAA5", border: "#1D9E75" };
+      if (t === "declining") return { bg: "#2b1e0d", text: "#EF9F27", border: "#BA7517" };
+      return { bg: "#1e1e1e", text: "#888", border: "#444" };
+    }
+
+    function MiniChart({ data }) {
+      const max = Math.max(...data, 1), min = Math.min(...data);
+      const range = max - min || 1;
+      const W = 600, H = 110, P = 10;
+      const pts = data.map((v, i) => {
+        const x = P + (i / (data.length - 1)) * (W - P * 2);
+        const y = H - 20 - ((v - min) / range) * (H - 30);
+        return [x, y];
+      });
+      const linePath = "M" + pts.map(p => p.join(",")).join(" L");
+      const areaPath = linePath + ` L${pts[pts.length-1][0]},${H-20} L${pts[0][0]},${H-20} Z`;
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 110 }} aria-label="12-month trend chart">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#E24B4A" stopOpacity="0.22" />
+              <stop offset="100%" stopColor="#E24B4A" stopOpacity="0.01" />
+            </linearGradient>
+          </defs>
+          <path d={areaPath} fill="url(#g)" />
+          <path d={linePath} fill="none" stroke="#E24B4A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          {pts.map(([x, y], i) => <circle key={i} cx={x} cy={y} r="3.5" fill="#E24B4A" />)}
+          {MONTHS.map((m, i) => {
+            const x = P + (i / (MONTHS.length - 1)) * (W - P * 2);
+            return <text key={i} x={x} y={H - 2} fontSize="11" fill="#555" textAnchor="middle">{m}</text>;
+          })}
+        </svg>
+      );
+    }
+
+    function ScoreBar({ score }) {
+      const color = scoreColor(score);
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color, fontWeight: 600, minWidth: 26 }}>{score}</span>
+          <div style={{ flex: 1, height: 4, background: "#2a2a2a", borderRadius: 2 }}>
+            <div style={{ width: `${score}%`, height: 4, background: color, borderRadius: 2, transition: "width 0.6s ease" }} />
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [query, setQuery] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [data, setData] = useState(null);
+      const [error, setError] = useState("");
+      const inputRef = useRef(null);
+
+      useEffect(() => { inputRef.current?.focus(); }, []);
+
+      async function doSearch() {
+        const kw = query.trim();
+        if (!kw) return;
+        setLoading(true); setError(""); setData(null);
+        try {
+          const prompt = `You are a YouTube keyword research expert. Analyze this YouTube keyword: "${kw}"
+
+Return ONLY valid JSON with no markdown, no backticks, no explanation. Use this exact structure:
+{
+  "keyword": "${kw}",
+  "monthly_searches": <realistic integer YouTube monthly search volume>,
+  "competition": "<low|medium|high>",
+  "competition_score": <integer 0-100>,
+  "trend": "<rising|stable|declining>",
+  "trend_data": [<12 integers, monthly relative search interest last 12 months, values between 20-100>],
+  "opportunity_score": <integer 0-100, higher means better for new creators>,
+  "related_keywords": [
+    { "keyword": "<string>", "monthly_searches": <integer>, "competition": "<low|medium|high>", "competition_score": <integer 0-100>, "trend": "<rising|stable|declining>", "opportunity_score": <integer 0-100> }
+  ],
+  "content_ideas": ["<video title 1>","<video title 2>","<video title 3>","<video title 4>","<video title 5>"]
+}
+Return exactly 8 related keywords. Be realistic with data. Return ONLY the JSON object.`;
+
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": "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", "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 1200,
+              messages: [{ role: "user", content: prompt }]
+            })
+          });
+          const json = await res.json();
+          if (json.error) throw new Error(json.error.message);
+          let raw = json.content.map(b => b.text || "").join("").replace(/```json|```/g, "").trim();
+          setData(JSON.parse(raw));
+        } catch (e) {
+          setError(e.message || "Something went wrong. Please try again.");
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      const card = { background: "#1a1a1a", border: "1px solid #222", borderRadius: 12 };
+
+      return (
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "28px 20px 60px" }}>
+
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
+            <div style={{ width: 38, height: 38, background: "#E24B4A", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+                <rect x="0.5" y="0.5" width="17" height="13" rx="3.5" stroke="rgba(255,255,255,0.4)" />
+                <path d="M7.5 9.5L12 7L7.5 4.5V9.5Z" fill="white" />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", letterSpacing: "-0.02em" }}>TubeKeywords</div>
+              <div style={{ fontSize: 12, color: "#666" }}>YouTube keyword research &amp; trends — powered by AI</div>
+            </div>
+          </div>
+
+          {/* Search bar */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 28 }}>
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && !loading && doSearch()}
+              placeholder="e.g. how to make money on youtube"
+              style={{ flex: 1, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 10, padding: "11px 16px", fontSize: 15, color: "#e8e8e8", transition: "border 0.2s" }}
+              aria-label="Enter a YouTube keyword"
+            />
+            <button
+              onClick={doSearch}
+              disabled={loading || !query.trim()}
+              style={{ background: loading ? "#7a2020" : "#E24B4A", border: "none", borderRadius: 10, padding: "11px 20px", fontSize: 14, fontWeight: 700, color: "#fff", cursor: loading ? "not-allowed" : "pointer", whiteSpace: "nowrap", transition: "all 0.2s" }}
+            >
+              {loading ? "Analyzing…" : "Research →"}
+            </button>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div style={{ background: "#2a1212", border: "1px solid #5a2020", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "#f09595", marginBottom: 20 }}>
+              ⚠ {error}
+            </div>
+          )}
+
+          {/* Spinner */}
+          {loading && (
+            <div style={{ textAlign: "center", padding: "56px 0" }}>
+              <div style={{ width: 34, height: 34, border: "3px solid #222", borderTopColor: "#E24B4A", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }} />
+              <div style={{ fontSize: 14, color: "#666" }}>Analyzing "{query}" on YouTube…</div>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loading && !data && !error && (
+            <div style={{ textAlign: "center", padding: "70px 0" }}>
+              <div style={{ fontSize: 44, marginBottom: 14 }}>🔍</div>
+              <div style={{ fontSize: 16, color: "#555", marginBottom: 8 }}>Enter any YouTube keyword above</div>
+              <div style={{ fontSize: 13, color: "#333" }}>Get search volume · competition score · related keywords · video ideas</div>
+            </div>
+          )}
+
+          {/* Results */}
+          {data && !loading && (
+            <div style={{ animation: "fadeIn 0.4s ease" }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", marginBottom: 18, letterSpacing: "-0.02em" }}>
+                Results for "{data.keyword}"
+              </div>
+
+              {/* Metric cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 20 }}>
+                {[
+                  {
+                    label: "Monthly searches",
+                    value: formatNum(data.monthly_searches),
+                    sub: (() => { const ts = trendStyle(data.trend); return <span style={{ fontSize: 11, background: ts.bg, color: ts.text, border: `1px solid ${ts.border}`, padding: "2px 8px", borderRadius: 99, fontWeight: 600 }}>{data.trend}</span>; })()
+                  },
+                  {
+                    label: "Competition",
+                    value: <span style={{ color: scoreColor(data.competition_score) }}>{data.competition_score}</span>,
+                    sub: <span style={{ fontSize: 12, color: "#555" }}>{data.competition} competition</span>
+                  },
+                  {
+                    label: "Opportunity score",
+                    value: <span style={{ color: scoreColor(data.opportunity_score) }}>{data.opportunity_score}</span>,
+                    sub: <span style={{ fontSize: 12, color: "#555" }}>for new creators</span>
+                  }
+                ].map((m, i) => (
+                  <div key={i} style={{ ...card, padding: "16px" }}>
+                    <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>{m.label}</div>
+                    <div style={{ fontSize: 26, fontWeight: 700, color: "#e8e8e8", marginBottom: 8 }}>{m.value}</div>
+                    {m.sub}
+                  </div>
+                ))}
+              </div>
+
+              {/* Trend chart */}
+              <div style={{ ...card, padding: "16px 20px", marginBottom: 20 }}>
+                <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Search trend — last 12 months</div>
+                <MiniChart data={data.trend_data} />
+              </div>
+
+              {/* Related keywords table */}
+              <div style={{ ...card, marginBottom: 20, overflow: "hidden" }}>
+                <div style={{ padding: "14px 18px", borderBottom: "1px solid #222", fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Related keywords ({data.related_keywords.length})
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid #1e1e1e" }}>
+                        {["Keyword", "Volume / mo", "Competition", "Trend", "Opportunity"].map(h => (
+                          <th key={h} style={{ padding: "10px 16px", fontSize: 11, color: "#444", textAlign: "left", fontWeight: 500 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.related_keywords.map((k, i) => {
+                        const ts = trendStyle(k.trend);
+                        const obg = scoreBg(k.opportunity_score), otx = scoreColor(k.opportunity_score);
+                        return (
+                          <tr key={i} style={{ borderBottom: i < data.related_keywords.length - 1 ? "1px solid #1a1a1a" : "none" }}>
+                            <td style={{ padding: "11px 16px", fontSize: 13, fontWeight: 600, color: "#ddd" }}>{k.keyword}</td>
+                            <td style={{ padding: "11px 16px", fontSize: 13, color: "#888" }}>{formatNum(k.monthly_searches)}</td>
+                            <td style={{ padding: "11px 16px", minWidth: 130 }}><ScoreBar score={k.competition_score} /></td>
+                            <td style={{ padding: "11px 16px" }}>
+                              <span style={{ fontSize: 11, background: ts.bg, color: ts.text, border: `1px solid ${ts.border}`, padding: "2px 8px", borderRadius: 99, fontWeight: 600 }}>{k.trend}</span>
+                            </td>
+                            <td style={{ padding: "11px 16px" }}>
+                              <span style={{ fontSize: 13, fontWeight: 700, background: obg, color: otx, padding: "2px 10px", borderRadius: 6 }}>{k.opportunity_score}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Content ideas */}
+              <div style={{ ...card, overflow: "hidden" }}>
+                <div style={{ padding: "14px 18px", borderBottom: "1px solid #222", fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Video content ideas
+                </div>
+                {data.content_ideas.map((idea, i) => (
+                  <div key={i} style={{ padding: "13px 18px", borderBottom: i < data.content_ideas.length - 1 ? "1px solid #1a1a1a" : "none", display: "flex", gap: 14, alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 12, color: "#444", minWidth: 20, fontWeight: 700, paddingTop: 2 }}>{i + 1}</span>
+                    <span style={{ fontSize: 14, color: "#ccc", lineHeight: 1.55 }}>{idea}</span>
+                  </div>
+                ))}
+              </div>
+
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
